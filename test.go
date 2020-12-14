@@ -1,7 +1,9 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"github.com/afex/hystrix-go/hystrix"
 	"golang.org/x/time/rate"
 	"math/rand"
 	"net/http"
@@ -40,11 +42,51 @@ func main() {
 	_ = http.ListenAndServe(":8090", ml(mux))*/
 
 	rand.Seed(time.Now().UnixNano())
-	for {
-		prod, _ := getProd()
-		fmt.Println(prod)
-		time.Sleep(time.Second * 1)
+	con := hystrix.CommandConfig{
+		Timeout:                2000,
+		MaxConcurrentRequests:  5,
+		RequestVolumeThreshold: 3,
+		ErrorPercentThreshold:  20,
+		SleepWindow:            5,
 	}
+	hystrix.ConfigureCommand("my_command", con)
+	//w := sync.WaitGroup{}
+
+	for i := 0; i < 100; i++ {
+		//go func() {
+		//w.Add(1)
+		//defer w.Done()
+		prodChan := make(chan Prod, 1)
+		errs := hystrix.Go("my_command", func() error {
+			prod, _ := getProd()
+			prodChan <- prod
+			return nil
+		}, func(err error) error {
+			prod, _ := recProd()
+			//prodChan <- prod
+			e := errors.New("my time out")
+			fmt.Print(prod)
+			return e
+			//return errors.New("my time out")
+			//return nil
+		})
+		select {
+		case p := <-prodChan:
+			fmt.Println(p)
+		case e := <-errs:
+			fmt.Println(e)
+		}
+		time.Sleep(time.Second * 1)
+		//}()
+	}
+	//w.Wait()
+	//	err := hystrix.Do("my_command", func() error {
+
+	/*if err != nil {
+		fmt.Println(err.Error())
+	}*/
+	//time.Sleep(time.Second * 1)
+
 }
 
 type Prod struct {
@@ -55,12 +97,20 @@ type Prod struct {
 
 func getProd() (Prod, error) {
 	rn := rand.Intn(10)
-	if rn < 6 {
+	if rn < 5 {
 		time.Sleep(time.Second * 3)
 	}
 	return Prod{
 		ID:    101,
 		Title: "GoLang 教程",
 		Price: 100,
+	}, nil
+}
+
+func recProd() (Prod, error) {
+	return Prod{
+		ID:    999,
+		Title: "go-kit教程",
+		Price: 114,
 	}, nil
 }
